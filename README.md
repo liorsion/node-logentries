@@ -1,311 +1,523 @@
-# node-logentries
+[![Build Status](https://travis-ci.org/logentries/le_node.svg)](https://travis-ci.org/logentries/le_node)
 
-** A Node.js wrapper for [logentries.com](http://logentries.com) **
+# le_node: Logentries Client
 
-If you're using this library, feel free to contact me on twitter if you have any questions! :) [@rjrodger](http://twitter.com/rjrodger)
+Allows you to send logs to your [logentries](https://www.logentries.com) account
+from Node or io.js.
 
-Current Version: 0.1.3
+> It might work with Browserify, too, but you would need to use shims for net
+> and tls. Such shims do exist, based on forge, but I haven’t tested it. There’s
+> a seperate client intended for use in the browser though, called
+> [le_js](https://www.npmjs.com/package/le_js), which uses http and is optimized
+> for browser-specific logging needs.
 
-Tested on: node 0.4.9
+Tested in Node v0.10 + and io.js. It probably works in Node 0.8 too, but one of
+the test libraries ([mitm](https://www.npmjs.com/package/mitm)) doesn’t, so it
+remains unconfirmed.
 
+What is now "le_node" was previously "logentries-client"; users of le_node
+versions before 1.0.2 should read the sections below that detail differences if
+they wish to update.
 
-# What it is
+<!-- MarkdownTOC autolink=true bracket=round -->
 
-An easy-to-use wrapper for the logentries.com service. The _node-logentries_ module makes it very easy to log directly to your logentries.com account direct from Node.js!
-This module is also completely compatible with [winston](https://github.com/indexzero/winston).
+- [Start](#start)
+- [Options](#options)
+- [Log Levels](#log-levels)
+- [Events](#events)
+- [Log Entries](#log-entries)
+- [Methods](#methods)
+- [Buffer & Connection Issues](#buffer--connection-issues)
+- [Using as a Winston ‘Transport’](#using-as-a-winston-transport)
+- [Using with Bunyan](#using-with-bunyan)
+- [Setting Up With Logentries Itself](#setting-up-with-logentries-itself)
+- [2015-05-26: le_node & Logentries-Client](#2015-05-26-le_node--logentries-client)
+- [Changelog (Post-Merge)](#changelog-post-merge)
+- [Changelog (Old Logentries-Client)](#changelog-old-logentries-client)
+- [Changelog (Old le_node)](#changelog-old-le_node)
+
+<!-- /MarkdownTOC -->
+
+## Start
 
 ```javascript
-var logentries = require('node-logentries')
+var Logger = require('le_node');
 
-var log = logentries.logger({
-  token:'YOUR_TOKEN'
-})
+var logger = new Logger({ token: 'myAccessToken' });
 
-// level specific methods like 'info', 'debug', etc.
-log.info("I'm a Lumberjack and I'm OK")
-
-// generic log method, also accepts JSON entries
-log.log("debug", {sleep:"all night", work:"all day"})
-
-// use as a winston transport
-var winston = require('winston')
-log.winston( winston )
-
-// specify custom levels when using as winston transport
-log.winston( winston, { level: 'silly', levels: { silly: 0, info: 1, error: 2} })
-
+logger.warning('The kittens have become alarmingly adorable.')
 ```
 
-# Key Features:
+## Options
 
-   * simple API
-   * fully configurable
-   * also an EventEmitter
-   * winston compatible
-   * fully tested
+The options object you provide to the constructor only requires your access
+token, but you can configure its behavior further.
 
-Core Methods:
+All of the following except `token`, `levels` and `secure` can also be
+configured after instantiation as settable properties on the client. They are
+accessors, though, and invalid values will be ignored.
 
-   * _{debug,info,...}( log_entry )_ : log entry at _debug,info,..._ level (configurable)   
-   * _log( level_name, log_entry )_ : log entry at _level_name_
-   * _on( event_name, callback )_ : listen for _error_ and _log_ events
-   * _level( level_name )_ : discard entries below this level
-   * _winston( winston, options )_ : register as a transport with winston
-   * _end_ : close connection to logentries.com (unsent logs remain queued)
+### Required
 
+ - **token:** String. Authorization token for the Logentries service.
 
-## Installation
+### Behavior
+ - **console:** If truthy, log events also get sent to `console.log`,
+   `console.warn` and `console.error` as appropriate. Default: `false`.
+ - **levels**: Custom names for the 8 log levels and their corresponding
+   methods. More details on this below.
+ - **minLevel**: The minimum level to actually record logs at. String or Number.
+   Defaults to 0.
+ - **bufferSize**: The maximum number of log entries that may be queued for
+   sending at a given moment. Default: `100`.
+ - **secure:** If truthy, uses a tls connection. Default: `false`.
+ - **timeout:** The time, in milliseconds, that inactivity should warrant
+   closing the connection to the host until needed again. Defaults to three
+   minutes.
 
-    npm install node-logentries
+### Log Processing Options
+ - **flatten**: Convert objects into a single-level object where the values of
+   interior objects become dot-notation properties of the root object. Defaults
+   to `false`. More details on this below.
+ - **flattenArrays**: If `flatten` is true, you can also indicate whether arrays
+   should be subject to the same process. Defaults to `true` if `flatten` is
+   `true`; otherwise meaningless.
+ - **replacer**: A custom value-transform function to be used during JSON
+   serialization. Applied before error transformation.
+ - **timestamp**: If truthy, prefix entries with an ISO timestamp (if strings)
+   or add the same as a property (if objects). Default: `false`.
+ - **withLevel**: Will prepend (string) or add property (object) indicating the
+   log level. Default: `true`.
+ - **withStack**: If an object is or contains an `Error` object, setting this to
+   `true` will cause the stack trace to be included. Default: `false.`
 
-And in your code:
+### Other
+ - **host**: The host to send logs to. Normally you would not want to set this,
+   but it may be useful for mocking during tests. The value may be just the host
+   or the host with the port specified.
+ - **port**: As above. This will default to 80 if `secure` is false, or 443 if
+   it’s true.
 
-    var logentries = require('node-logentries')
+## Log Levels
 
-Or clone the git repository:
-    git clone git://github.com/rjrodger/node-logentries.git
+The default log levels are:
 
-The node-logentries module does not depend on any non-core modules.
+ 0. debug
+ 1. info
+ 2. notice
+ 3. warning
+ 4. err
+ 5. crit
+ 6. alert
+ 7. emerg
 
-You also need a logentries.com account - [get started with logentries.com](https://logentries.com/docs/configure/#section9)
+You can provision the constructor with custom names for these levels with either
+an array or an object hash:
 
+```javascript
+[ 'boring', 'yawn', 'eh', 'hey' ]
 
-## Usage
-
-
-This module sends your logging entries to the logentries.com service. You will need an account with this service for the module to work.
-
-Once you have logentries.com account, you need just one configuration item to initialize a logging instance (you can create more than one):
-
-  * TOKEN: As supplied by Logentries when you create a logfile of source type Token TCP.
-
-The module provides you with a set of logging methods that correspond to the standard syslog log levels. These are, in order of increasing severity:
-
-  * debug    
-  * info     
-  * notice   
-  * warning  
-  * err      
-  * crit     
-  * alert    
-  * emerg    
-
-You can change these levels using the _levels_ configuration option (see below).
-
-Each level has a convenience method named after it, so you can say
-_logger.debug(...)_ or _logger.info(...)_, for example. There is also
-a general logging method, _log_, that takes the name of the log level as the first entry.
-
-To create a logging instance, call the _logger_ function of the module, passing any options as the first argument:
-
+{ boring: 0, yawn: 1, eh: 2, hey: 3 }
 ```
-var mylogger = require('node-logentries').logger({
-  levels: {
-    chill:0, meh:1, hmm:2, notgood:3, ohnoes:4, omgwtfbbq:5
-  }
-})
+
+In the former case, the index corresponds to the numeric level, so sparse arrays
+are valid. In either case, missing levels will be filled in with the defaults.
+
+The `minLevel` option respects either level number (e.g. `2`) or the name (e.g.
+`'eh'`).
+
+The level names each become methods on the client, which are just sugar for
+calling `client.log(lvl, logentry)` with the first argument curried.
+
+Since these names will appear on the client, they can’t collide with existing
+properties. Not that you’re particularly likely to try naming a log level
+‘hasOwnProperty’ or ‘_write’ but I figured I should mention it.
+
+So the following three are equivalent:
+
+```javascript
+logger.notice('my msg');
+logger.log('notice', 'my msg');
+logger.log(2, 'my msg');
 ```
 
-Each logger object is an instance of [EventEmitter](http://nodejs.org/docs/v0.4.10/api/events.html#events.EventEmitter). You can listen for the following events:
+It’s also possible to forgo log levels altogether. Just call `log` with a single
+argument and it will be interpretted as the log entry. When used this way, the
+`minLevel` setting is ignored.
 
-  * _log_: capture each log event (maybe for your own archive)
-  * _error_: get notification of any errors in the logging system itself
+## Events
 
+### `'error'`
+The client is an EventEmitter, so you should (as always) make sure you have a
+listener on `'error'`. Error events can occur when there’s been a problem with
+the connection or if a method was called with invalid parameters. Note that
+errors that occur during instantiation, as opposed to operation, will **throw**.
 
-## Conventions
+### `'log'`
+Triggered when a log is about to be written to the underlying connection. The
+prepared log object or string is supplied as an argument.
 
-The standard syslog log levels are used by default: debug, info, notice, warning, err, crit , alert, emerg.    
+### `'connected'` and `'disconnected'`
+These indicate when a new connection to the host is established or has ended.
+Disconnection is normal if the connection is inactive for several minutes; it
+will be reopened when needed again.
 
-However, if installed as a winston transport (using the _winston_ method), then the winston levels are used: silly, verbose, info, warn, debug, error.
+### `'drain'`, `'finish'`, `'pipe'`, and `'unpipe'`
+These are events inherited from `Writable`. Note that the drain event here is
+not the one you want to listen for if you’re interested in confirming that all
+pending data has **transmitted** -- for that, listen to `'connection drain'`.
 
+### `'connection drain'`
+This is the propagated drain event of the current underlying connection stream.
+This can be useful when it’s time for the application to terminate but you want
+to be sure any pending logs have finished writing.
 
-## API
+```javascript
+process.on('SIGINT', () => {
+   logger.notice({ type: 'server', event: 'shutdown' });
+   logger.once('connection drain', () => process.exit());
+});
+```
 
-For the API examples, assume the following lines of code at the top of your source code file:
+## Log Entries
 
-    var logentries = require('node-logentries')
+Log entries can be strings or objects. If the log argument is an array, it will
+be interpretted as multiple log events.
 
-    var log = logentries.logger({
-      token:'YOUR_TOKEN'
-    })
+### Object Serialization
 
-This gives you a standard _log_ object.
+In the case of objects, the native JSON.stringify serialization is augmented in
+several ways. In addition to handling circular references, it will automatically
+take care of a variety of objects and primitives which otherwise wouldn’t
+serialize correctly, like Error, RegExp, Set, Map, Infinity, NaN, etc.
 
-You should really also read the logentries.com documentation so that you understand how logentries.com works: 
-[logentries.com User Guide](https://logentries.com/docs/userguide)
+If you choose to set `withStack` to true, errors will include their stacktraces
+as an array (so that they are not painful to look at). Be sure to turn on
+"expand JSON" (meaning pretty print) in the options on logentries:
 
-### Configuration Options
+![stack trace as seen in logentries app][screen1]
 
-When you create a _log_ object with the _logger_ function on the module, you can supply the following options:
+You can adjust this further by supplying your own custom `replacer`. This is a
+standard argument to JSON.stringify -- See [MDN: JSON > Stringify > The Replacer Parameter](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify#The_replacer_parameter)
+for details. In the event that you supply a custom replacer, it is applied
+prior to the built-in replacer described above so you can override its behavior.
 
-   * _token_:    required; logentries destination token uuid
-   * _secure_:     optional; default is false; use tls for communication
-   * _transport_:  optional; default is LogEntriesTransport; transport object
-   * _levels_:     optional; default is syslog-style; custom log levels
-   * _printerror_: optional; default is true; print errors to STDERR with console.error
-   * _timestamp_: optional; default is true; autogenerate a timestamp
-   * _usequotes_: optional; default is false; add double quotes around every field
+### Optional Augmentation
 
-The _token_  entry relates to your logentries.com configuration. The _transport_ option allows you to 
-provide an alternative transport implementation (see below). 
+Two options are available, `timestamp` and `withLevel`, which will add data to
+your log events. For objects, these are added as properties (non-mutatively).
+For strings, these values are prepended. If the name of a property would cause
+a collision with an existing property, it will be prepended with an underscore.
 
-By default the module will print errors to STDOUT to aid with debugging in a development context. To run this off,
-set the _printerror_ option to false.
+### Flattening Log Objects
 
-The levels option lets you specify custom log levels. You provide these as a object, the property names of which are the
-log levels. The value of each log level should be an integer specifying its order. For example:
+In some cases it will end up being easier to query your data if objects aren’t
+deeply nested. With the `flatten` and `flattenArrays` options, you can tell the
+client to transform objects like so:
 
-    { lowest:0, lower:1, middle:2, higher:3, highest:4 }
+  * `{ "a": 1, "b": { "c": 2 } }` => `{ "a": 1, "b.c": 2 }`
 
+If `flattenArrays` has not been set to false, this transformation will apply to
+arrays as well:
 
+  * `{ "a": [ "b", { "c": 3 } ] }` => `{ "a.0": "b", "a.1.c": 3 }`
 
-### `<loglevel>`: `log.<logelevel>( entry )`
+## Methods
 
-  * _entry_: (required) log entry, can be string or JSON object
+In addition to `log` and its arbitrary sugary cousins, you can call
+`closeConnection` to explicitly close an open connection if one exists; you
+might wish to do this as part of a graceful exit. The connection will reopen if
+you log further.
 
-Submit a log entry. The entry data will be submitted to logentries.com. If a logging connection to logentries.com is not open,
-a connection will be opened, and any pending entries will be processed in order.
+Also, because the client is actually a writable stream, you can call `write`
+directly. This gives you lower-level access to writing entries. It is in object
+mode, but this means it expects discreet units (one call = one entry), not
+actual objects; you should pass in strings. This is useful if you want to pipe
+stdout, for example.
 
-    log.info('buttered scones for tea')
+## Buffer & Connection Issues
 
-The log level and an optional timestamp are prefixed (in that order) to the log entry, and will be present in the logentries.com console.
+If there’s a problem with the connection, entries will be buffered to a max of
+100 entries by default. After that, error events will be emitted when trying to
+log further. If the buffer drains, normal logging can resume. If `console` is
+true, these log entries will still display there, but they will not make it to
+LogEntries.
 
-The <loglevel> convenience methods are dynamically constructed from the configured list of logging levels, a method being constructed for each level,
-having the name of the level. If you're naughty and use log levels like 'log' and 'level', they will be ignored.
+You can adjust the maximum size of the buffer with the `bufferSize` option.
+You’ll want to raise it if you’re dealing with very high volume (either a high
+number of logs per second, or when log entries are unusually long on average).
+Outside of these situations, exceeding the max buffer size is more likely an
+indication of creating logs in a synchronous loop (which seems like a bad idea).
 
+If the connection fails, it will retry with an exponential backoff for several
+minutes. If it does not succeed in that time, an error is emitted. A ‘ban’ will
+be placed on further attempts but it will lift after some more time has passed,
+at which point the process can repeat (and hopefully work).
 
-### log: `log.log(level,entry)`
+A connection to the host does not guarantee that your logs are transmitting
+successfully. If you have a bad token, there is no feedback from the server to
+indicate this. The only way to confirm that your token is working is to check
+the live tail on Logentries. I will investigate this further to see if there’s
+some other means with which a token can be tested for validity.
 
-  * _level_: (required) the name of the log level (must match one of the configured levels)
-  * _entry_: (required) log entry, can be string or JSON object
+## Using as a Winston ‘Transport’
 
-Submit a log entry, passing the name of the level programmatically. The dynamically constructed convenience methods, 
-such as _debug_, delegate to this method internally.
+If Winston is included in your package.json dependencies, simply requiring the
+Logentries client will place the transport constructor at `winston.transports`,
+even if Winston itself hasn’t yet been required.
 
-    log.log('debug','press wild flowers')
+```javascript
+var Logger = require('le_node');
+var winston = require('winston');
 
-A log entry will only be submitted if the log level is greater than or equal to the current log level setting of the logger.
-This allows you to drop noisy debugging logs from production environments.
+assert(winston.transports.Logentries);
+```
 
+When adding a new Logentries transport, the options argument passed to Winston’s
+`add` method supports the usual options in addition to those which are Winston-
+specific. If custom levels are not provided, Winston’s defaults will be used.
 
-### on: `log.on(event,callback)`
+```javascript
+winston.add(winston.transports.Logentries, { token: myToken });
+```
 
-  * _event_: (required) one of _error_ or _log_
-  * _callback_: (required) callback function
+In the hard-to-imagine case where you’re using Winston without including it in
+package.json, you can explicitly provision the transport by first requiring
+Winston and then calling `Logger.provisionWinston()`.
 
-This method is provided by the standard Node _EventEmitter_. Register callback functions to get notified of errors.
-The module cannot log errors itself, as it has nowhere to log them! Hosted environments may not provide writable disk access.
-Therefore, the module simply emits an error event that you can listen for. The module does also print errors to STDOUT by default,
-to help with debugging. Use the _printerror_ configuration setting to control this (see above).
+## Using with Bunyan
 
-    log.on('error',function(err){
-       console.log('hangs around.... In bars!? '+err )
-    }
+For Bunyan it’s like so:
 
-You may also need to gain access to the verbatim log lines. You can listen to the _log_ event to do this:
+```javascript
+var bunyan = require('bunyan');
 
+var Logger = require('le_node');
 
-    log.on('log',function(logline){
-       console.log( logline )
-    }
+var loggerDefinition = Logger.bunyanStream({ token: myToken });
 
-This gives you the logline, a single string in the format:
+// One stream
+var logger1 = bunyan.createLogger(loggerDefinition);
 
-    "level" "ISODate" "entry"
+// Multiple streams
+var logger2 = bunyan.createLogger({
+	name: 'whatevs',
+	streams: [ loggerDefinition, otherLoggerDefinition ]
+});
+```
 
+As with Winston, the options argument takes the normal constructor options (with
+the exception of `timestamp`, which is an option you should set on Bunyan itself
+instead). Bunyan uses six log levels, so the seventh and eighth, if provided,
+will be ignored; by default Bunyan’s level names will be used.
 
-### level: `log.level(name)`
+The object returned by `bunyanStream` is the Bunyan logging ‘channel’ definition
+in total. If you want to futz with this you can -- you can change its `name` or
+get the `stream` object itself from here.
 
-  * _name_: (required) the name of the level
+## Setting Up With Logentries Itself
 
-Set the current log level. All log entries below this level will be ignored. All log levels are given an integer rank when they
-are specified. The default rankings are:
+When you create an account at Logentries (just a standard signup form; there’s a
+free tier), you can find the token you need. It’s shown during the initial walk-
+through but you can find it later under Logs/Hosts/{ the name of your host } --
+on the far right, a gray TOKEN button that you can click to reveal the string.
 
+That’s it -- once you have the token you’re set.
 
-    {
-      debug     :0,
-      info      :1,
-      notice    :2,
-      warning   :3,
-      err       :4,
-      crit      :5,
-      alert     :6,
-      emerg     :7,
-   }
+[screen1]: docs/screen1.png
 
-For example, if you specify a level of _warning_, then log entries at levels _debug_, _info_, and _notice_ will be dropped.
+## 2015-05-26: le_node & Logentries-Client 
 
-    log.level('warning')
+Previously, "le_node" and "logentries-client" were two different modules. The
+former has been replaced with the latter codebase, but the le_node name is the
+canonical repo (it’s referenced in many places). It’s still possible to get
+logentries-client under that name on NPM, but it’s soon just going to be an
+alias for this repository, le_node.
 
+For users of le_node from before this switch, there are some important
+differences to note before upgrading.
 
-### winston: `log.winston( winston, options )`
+The new codebase does follow the same essential pattern. If you only used the
+client constructor and the log methods previously, there may be no breaking
+changes for you. But for anybody else...
 
-  * _winston_: (required) winston module
-  * _options_: (optional) set the winston level _{level:'silly'}_
+### Breaking Change: `client.end()`
 
-The node-logentries module is fully compatible with the
-[winston](https://github.com/indexzero/winston) logging module.  To
-log to logentries.com using winston, use the _winston_ method. This
-takes care of all the transport object registration and set up for
-you. The winston log levels are automatically configured as the
-current log levels.
+Unlike old le_node, the client is itself a writable stream (and therefore you
+can pipe to it, for example from stdout, though note that 1 write invocation =
+1 log entry). This also means that it has standard writable stream events and
+methods, including `.end()`. In the old le_node, `.end()` was a non-stream
+method that closed the underlying connection to the host.
 
-There is an optional second argument to specify some integration options. At present this only lets you set the winston log level,
-(which is _info_ by default).
+For the functionality previously provided by `.end()`, use `.closeConnection()`.
 
-    var winston = require('winston')
-    log.winston( winston, {level:'silly'} )
-   
-    // then use winston as normal
-    winston.info('And I thought you were so rugged!')
+### Deprecation: `client.level()` and `client.winston()`
 
-With the winston API, you can specify a _meta_ parameter to a log
-entry. The node-logentries module converts this to a JSON string and
-appends it to the log entry string.
+The old le_node had a method called `level()` for setting the minimum log level.
+This is now a property (not a method) called `minLevel`. It can be set to either
+the name of the level or its index. The `level()` method has been added to the
+new codebase to facilitate migration, but will be removed at a later date.
 
+Simply requiring le_node now automatically provisions Winston, if present, with
+a Logentries transport constructor. You don’t have to do anything else. The
+`winston()` method has also been added to the new codebase to prevent errors,
+but it’s a noop and will be removed at a later date.
 
-### end: `log.end()`
+### Other Things For Migrants to Note
 
-This module maintains an open HTTP connection to _api.logentries.com_, so that logging will be fast and efficient.
-If the connection breaks, it is automatically reestablished.
+The old documentation seemed to suggest that placing a listener on the client
+for error events was an optional thing. This isn’t the case (and wasn’t the
+case in the old client, either). An unhandled error event from an EventEmitter
+is an unhandled error period. If you don’t place a listener for error events,
+your application will crash if the client emits an error.
 
-If you need to close the connection, call the end method. This primarily useful for unit testing to exit the test process.
-NOTE: if you submit further log entries after calling end, the connection will be reopened.
+The new codebase has a lot of new features, including some that are similar to,
+but not necessarilly the same as, old features that had been removed at some
+point or were just not documented.
 
-If you need finer grained control, then you will need to write your own transport object, or extend the existing one. See the _lib/logentries.js_ file.
+The outstanding issues that exist for le_node at the time of writing are mostly
+things which either never affected this codebase or no longer make sense in
+regard to it.
 
+ - circular refs are fine
+ - `time` and `level` properties will never collide with existing props and are
+   both optional
+ - JSON serialization is much more robust and customizable
+ - serialized objects will not be cut off at an arbitrary depth
+ - the connection is closed on extended inactivity and only reopened as needed
+ - errors are handled correctly
+ - there is built-in support for Bunyan
+ - Winston is provisioned in accord with prevailing conventions
 
+You should assume that there are other breaking changes which I am unaware
+of. When I wrote Logentries Client I hadn’t considered that it might replace
+le_node, so unfortunately interoperability was not on my mind. You’ll wish to
+test thoroughly before updating an existing codebase to use the new client.
 
-## Transports
+## Changelog (Post-Merge)
 
-This module uses a transport object to perform the actual transfer of
-data to logentries.com. You provide your own customized transport
-object by using the _transport_ configuration option.
+### 1.0.14
 
-If you are implementing your own transport object, you need to provide these interface methods:
+ - Allows setting port with a string instead of a number.
 
-   * _queue( queue )_ : gives you an array to use as a queue, _Array.shift_ items off
-   * _consume()_ : process outstanding items in the queue by sending them to logentries.com
-   * _end()_ : (optional) close connection to logentries.com
+### 1.0.13
+ 
+ - Fixes bug with winston transport’s `level` property.
 
-Take a look at the unit tests (in _test_ folder) to see some simple implementations.
+### 1.0.12
 
+ - Increased default buffer size
+ - Made bufferSize (highWaterMark) configurable
 
-## Testing
+### 1.0.10
 
-The unit tests use [mocha](http://visionmedia.github.com/mocha/), and are in the _test_ folder.
+ - Fixes problems with setting custom host & port
 
-    mocha test/logentries.test.js
+### 1.0.9
 
-The acceptance tests (these push actual data to the live logentries.com service) are simple node scripts, and are in the _accept_ folder.
-Copy the _accept/conf.js_ file to _accept/conf.mine.js_ and add the token for your log file. Run directly:
+ - Fixes serialization bug in cases where the root-level object is itself
+   exotic or otherwise does not ‘have own properties,’ including directly logged
+   errors.
 
-    node live.accept.js
+### 1.0.8
 
+ - Fixed bugged handling of Winston’s ‘meta’ parameter.
 
+### 1.0.7
 
-## logentries.com service.
+ - Fixed nested dependency issues with shrinkwrap.
+ - Various minor changes (docs, etc)
 
-Company site: [logentries.com](http://logentries.com)
+### 1.0.2
 
+ - Logentries Client has become the new le_node. The original logentries-client
+   module is now an alias for le\_node, and le\_node is now what was previously
+   called logentries-client.
+ - Added `level()` and `winston()` methods with deprecation warnings so that
+   existing le_node applications do not throw TypeErrors.
+ - Added events for 'connected', 'disconnected' and 'connection drain'
 
+## Changelog (Old Logentries-Client)
+
+### 1.0.0 / 1.0.1
+
+ - Major overhaul -- rewrote in ES6
+ - Client is now a writable stream, compatible with stdout
+ - Added `withLevel` and `timeout` options
+ - Exposed `host` and `port` options for testing
+ - Expanded default serialization to handle more JSON-choking cases, including
+   Map, Set and Symbol
+ - Added more sanity checks on instantiation
+ - Made 'level' argument optional when calling `client.log`
+ - BREAKING CHANGE: `client.log` method no longer accepts an arbitrary number of
+   log entry arguments (to support above case, which seems much likely to be
+   useful)
+ - Added custom, informative error objects
+ - Changed default `minLevel` value to zero (1 was an accident)
+ - The most significant changes concern handling the connection to the host:
+   - An exponential backoff is used when connecting fails
+   - After repeated failures, a cooldown period is enforced before further tries
+   - The buffer of pending entries has a maximum now (60)
+   - Errors get emitted when these conditions occur
+
+### 0.5.0
+
+ - Added `flatten` and `flattenArray` options
+ - Added more special cases for the default serializer
+ - Added new tests
+
+### 0.4.0
+
+ - Prevented mutation of incoming log objects when adding timestamp or level
+ - Turned thrown strings into proper errors (oops!)
+ - Updated dependencies
+
+### 0.3.3
+
+ - Switched to the new API endpoint
+
+### 0.3.1 & 0.3.2
+
+ - Readme updated
+
+### 0.3.0
+
+ - Improved stack trace handling when `withStack` set to true
+
+### 0.2.1
+
+ - Path for problems with new 0.2.0 options
+ - Added new tests
+
+### 0.2.0
+
+ - Added proper handling for objects with circular references
+ - Added custom serialization for Error objects & `withStack` option
+ - Changed lodash to `runInContext()` to prevent template string problems
+
+### 0.1.0
+
+ - Initial commit
+
+## Changelog (Old le_node)
+
+(Pieced together to the best of my ability by reviewing commit history.)
+
+### 0.1.4
+
+ - Cleanup (rewrite?)
+ - Did not include several previously available options, including KVP mode
+
+### 0.1.3
+
+ - Switched from http to net module for non-ssl connection
+ - Added KVP-style flattening options & made it default
+ - Added more tests and options
+
+### 0.1.0 - 0.0.2
+
+ - Code cleanup, bug fixes and tests
+
+### 0.0.1
+
+ - Initial commit

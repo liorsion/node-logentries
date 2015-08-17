@@ -1,2 +1,12 @@
-*~
-accept/conf.mine.js
+/.git
+/.gobble-build
+/docs
+/node_modules
+/src
+/test
+.travis.yml
+.npmignore
+.eslintignore
+.eslintrc
+gobblefile.js
+!/lib/node_modules
